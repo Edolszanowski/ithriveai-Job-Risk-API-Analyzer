@@ -4,6 +4,4 @@ plotly
 sqlalchemy
 psycopg2-binary
 requests
-numpy
 trafilatura
-beautifulsoup4
