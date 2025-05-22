@@ -12,11 +12,11 @@ from sqlalchemy import create_engine, text
 from typing import List, Dict, Any
 
 # Cache for storing job titles to minimize database queries
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def load_job_titles_from_db():
     """
     Load all job titles from the database.
-    Results are cached for one hour to reduce database load.
+    Results are cached for one minute to ensure fresh data.
     
     Returns:
         List of dictionaries with job titles and SOC codes
@@ -159,6 +159,11 @@ def job_title_autocomplete(label: str, key: str = "", placeholder: str = "Search
     # Search for matching job titles
     if query:
         matches = search_job_titles(query)
+        
+        # Debug info - remove this later
+        st.write(f"Debug: Found {len(matches)} matches for '{query}'")
+        if matches:
+            st.write(f"Debug: First few matches: {[m['title'] for m in matches[:3]]}")
         
         if matches:
             # Display matches in a selectbox
