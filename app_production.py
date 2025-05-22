@@ -515,40 +515,41 @@ with tabs[0]:  # Single Job Analysis tab
                                 base_2020 = current_emp / (growth_factor ** 3)  # Work backwards to 2020
                                 employment_values = [int(base_2020 * (growth_factor ** i)) for i in range(6)]
                             else:
-                                # Fallback with SOC-specific estimates
+                                # No fallback data - show message if no real BLS data
                                 years = [2020, 2021, 2022, 2023, 2024, 2025]
-                                employment_values = job_api_integration.get_employment_trend(search_job_title).get("employment", [100000, 105000, 110000, 115000, 120000, 125000])
+                                employment_values = [0, 0, 0, 0, 0, 0]  # Will show as "Data not available"
                     except Exception as e:
-                        # Fallback to API trend data
-                        api_trend = job_api_integration.get_employment_trend(search_job_title)
-                        years = api_trend.get("years", [2020, 2021, 2022, 2023, 2024, 2025])
-                        employment_values = api_trend.get("employment", [100000, 105000, 110000, 115000, 120000, 125000])
+                        # No fallback - only real BLS data
+                        years = [2020, 2021, 2022, 2023, 2024, 2025]
+                        employment_values = [0, 0, 0, 0, 0, 0]
                 else:
-                    # Fallback to API trend data
-                    api_trend = job_api_integration.get_employment_trend(search_job_title)
-                    years = api_trend.get("years", [2020, 2021, 2022, 2023, 2024, 2025])
-                    employment_values = api_trend.get("employment", [100000, 105000, 110000, 115000, 120000, 125000])
+                    # No fallback - only show real BLS data
+                    years = [2020, 2021, 2022, 2023, 2024, 2025]
+                    employment_values = [0, 0, 0, 0, 0, 0]
             
-            # Create employment trend chart with real data
-            trend_fig = go.Figure()
-            trend_fig.add_trace(go.Scatter(
-                x=years,
-                y=employment_values,
-                mode='lines+markers',
-                name='Employment',
-                line=dict(color='#0084FF', width=2),
-                marker=dict(size=8)
-            ))
-            
-            trend_fig.update_layout(
-                title=f'Employment Trend for {search_job_title} (2020-2025)',
-                xaxis_title='Year',
-                yaxis_title='Number of Jobs',
-                height=350,
-                margin=dict(l=40, r=40, t=60, b=40)
-            )
-            
-            st.plotly_chart(trend_fig, use_container_width=True)
+            # Create employment trend chart only with real BLS data
+            if employment_values and any(val > 0 for val in employment_values):
+                trend_fig = go.Figure()
+                trend_fig.add_trace(go.Scatter(
+                    x=years,
+                    y=employment_values,
+                    mode='lines+markers',
+                    name='Employment',
+                    line=dict(color='#0084FF', width=2),
+                    marker=dict(size=8)
+                ))
+                
+                trend_fig.update_layout(
+                    title=f'Employment Trend for {search_job_title} (2020-2025)',
+                    xaxis_title='Year',
+                    yaxis_title='Number of Jobs',
+                    height=350,
+                    margin=dict(l=40, r=40, t=60, b=40)
+                )
+                
+                st.plotly_chart(trend_fig, use_container_width=True)
+            else:
+                st.info("📊 **Employment trend data from Bureau of Labor Statistics not yet available for this position.** Analysis shows current risk factors and projections based on job category research.")
             
             # Similar Jobs section
             st.markdown("<h3 style='color: #0084FF; font-size: 20px; margin-top: 20px;'>Similar Jobs</h3>", unsafe_allow_html=True)

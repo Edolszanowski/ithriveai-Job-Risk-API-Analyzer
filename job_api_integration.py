@@ -777,7 +777,7 @@ def get_job_data(job_title: str) -> Dict[str, Any]:
         return get_ui_developer_data()
     elif job_title_lower == "web developer" or job_title_lower == "web programmer" or job_title_lower == "website developer":
         return get_web_developer_data()
-    elif job_title_lower == "teacher" or job_title_lower == "educator" or job_title_lower == "instructor":
+    elif job_title_lower == "teacher" or job_title_lower == "educator" or job_title_lower == "instructor" or job_title_lower == "elementary school teachers" or job_title_lower == "elementary teacher":
         return get_teacher_data()
     elif job_title_lower == "court reporter" or job_title_lower == "digital court reporter" or job_title_lower == "stenographer":
         return get_court_reporter_data()
@@ -1406,7 +1406,7 @@ def get_teacher_data():
     """
     # Define rich data for Teachers
     occ_code = "25-2021"  # SOC code for Elementary School Teachers
-    standardized_title = "Teacher"
+    standardized_title = "Elementary School Teachers"
     
     # Occupation data with employment figures
     occupation_data = {
@@ -1428,7 +1428,7 @@ def get_teacher_data():
     risk_data = {
         "year_1_risk": 15.0,
         "year_5_risk": 30.0,
-        "risk_category": "Low to Moderate",
+        "risk_category": "Low",
         "risk_factors": [
             "AI tools can generate lesson plans and educational materials",
             "Automated grading systems reduce administrative workload",
@@ -1635,10 +1635,7 @@ def get_internal_job_data(job_title: str) -> Dict[str, Any]:
             "percent_change": "Unknown",
             "annual_job_openings": "Unknown"
         },
-        "trend_data": {
-            "years": list(range(2020, 2026)),
-            "employment": [100000, 102000, 105000, 108000, 110000, 112000]  # Generic trend data
-        },
+        "trend_data": get_employment_trend(job_title),
         "similar_jobs": [
             {
                 "job_title": "Related Position 1",
@@ -1992,36 +1989,23 @@ def get_employment_trend(job_title: str, years: int = 5) -> Dict[str, Any]:
     best_match = occupation_matches[0]
     occ_code = best_match["code"]
     
-    # In a real implementation, this would query the BLS API for historical data
-    # Generate sample data for now
-    current_year = int(time.strftime("%Y"))
-    years_list = list(range(current_year - years, current_year + 1))
+    # Query BLS API for real historical employment data
+    try:
+        from bls_connector import get_occupation_data
+        bls_data = get_occupation_data(occ_code)
+        
+        if bls_data and "employment_trend" in bls_data:
+            return bls_data["employment_trend"]
+    except Exception:
+        pass
     
-    # Sample employment values with a trend
-    base_employment = 100000
-    growth_rate = 0.02  # 2% annual growth
-    
-    if occ_code.startswith("15"):  # Computer occupations
-        base_employment = 150000
-        growth_rate = 0.08  # 8% annual growth
-    elif occ_code.startswith("43"):  # Administrative support
-        base_employment = 200000
-        growth_rate = -0.05  # 5% annual decline
-    
-    employment_values = []
-    for i, year in enumerate(years_list):
-        employment = int(base_employment * (1 + growth_rate) ** i)
-        employment_values.append(employment)
-    
-    # Create trend data
-    trend_data = {
+    # No fallback data - return empty if no real BLS data available
+    return {
+        "error": "trend_data_unavailable",
+        "message": f"Employment trend data not available for {best_match['title']}",
         "job_title": best_match["title"],
-        "occupation_code": occ_code,
-        "years": years_list,
-        "employment": employment_values
+        "occupation_code": occ_code
     }
-    
-    return trend_data
     
 # Add Web Developer function
 def get_web_developer_data():
