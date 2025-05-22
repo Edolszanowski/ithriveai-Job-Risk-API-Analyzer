@@ -19,6 +19,12 @@ from job_title_autocomplete_v2 import job_title_autocomplete, load_job_titles_fr
 # Check if BLS API key is set
 bls_api_key = os.environ.get('BLS_API_KEY')
 
+# Handle health check requests
+query_params = st.query_params
+if query_params.get("health_check") == "true":
+    st.text("OK")
+    st.stop()
+
 # Page configuration
 st.set_page_config(
     page_title="Career AI Impact Analyzer",
