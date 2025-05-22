@@ -42,7 +42,11 @@ JOB_TITLE_TO_SOC = {
     "data analyst": "15-2041",
     "business analyst": "13-1111",
     "financial analyst": "13-2051",
-    "architect": "17-1011"
+    "architect": "17-1011",
+    "court reporter": "23-2011",
+    "stenographer": "23-2011",
+    "digital court reporter": "23-2011",
+    "travel agent": "41-4012"
 }
 
 # Job category mapping - helps group similar occupations
