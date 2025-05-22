@@ -31,11 +31,9 @@ try:
     # Set a very short timeout to avoid hanging the app
     connect_args = {}
     if 'postgresql' in database_url:
-        # Forcing IPv4 connection only and short timeout
+        # Just use a short timeout - removed incompatible options
         connect_args = {
-            "connect_timeout": 3,  # 3 seconds max
-            "host": database_url.split('@')[1].split(':')[0] if '@' in database_url else None,
-            "options": "-c AddressFamily=ipv4"  # Force IPv4 connections
+            "connect_timeout": 3  # 3 seconds max
         }
     
     engine = create_engine(database_url, connect_args=connect_args)
