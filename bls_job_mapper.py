@@ -616,11 +616,14 @@ def get_complete_job_data(job_title: str) -> Dict[str, Any]:
     Returns:
         Dictionary with combined job data
     """
-    # First fetch BLS data for the job
+    # First get the SOC code and category from our mapping
+    soc_code, standardized_title, job_category = find_occupation_code(job_title)
+    
+    # Then fetch BLS data for the job
     bls_data = fetch_bls_data(job_title)
     
-    # Extract job category
-    job_category = bls_data.get("job_category", "General")
+    # Use the category from our mapping (more reliable than BLS data)
+    job_category = job_category if job_category != "General" else bls_data.get("job_category", "General")
     
     # Calculate AI displacement risk
     risk_data = calculate_ai_risk(job_title, job_category)
@@ -629,7 +632,7 @@ def get_complete_job_data(job_title: str) -> Dict[str, Any]:
     result = {
         # Job information
         "job_title": bls_data.get("standardized_title", job_title),
-        "occupation_code": bls_data.get("occupation_code"),
+        "occupation_code": soc_code,
         "job_category": job_category,
         
         # Employment data
