@@ -28,12 +28,27 @@ if database_url:
 
 # Create database engine with a short timeout
 try:
-    # Set a very short timeout to avoid hanging the app
+    # Enhanced connection settings for Neon PostgreSQL
     connect_args = {}
     if 'postgresql' in database_url:
-        connect_args = {"connect_timeout": 3}  # 3 seconds max
+        connect_args = {
+            "connect_timeout": 10,             # 10 seconds timeout
+            "keepalives": 1,                   # Enable keepalives
+            "keepalives_idle": 30,             # Seconds before sending keepalive
+            "keepalives_interval": 10,         # Seconds between keepalives 
+            "keepalives_count": 5,             # Max number of keepalive retries
+            "sslmode": 'require'               # Force SSL connection
+        }
     
-    engine = create_engine(database_url, connect_args=connect_args)
+    # Create engine with connection pooling for better reliability
+    engine = create_engine(
+        database_url, 
+        connect_args=connect_args,
+        pool_size=5,                         # Connection pool size
+        max_overflow=10,                     # Max extra connections
+        pool_timeout=30,                     # Connection timeout
+        pool_recycle=1800                    # Recycle connections after 30 min
+    )
     # Test connection with a quick timeout
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
