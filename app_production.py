@@ -630,6 +630,79 @@ with tabs[0]:  # Single Job Analysis tab
             
             # Get HTML from career_navigator module to avoid escaping issues
             st.markdown(career_navigator.get_html(), unsafe_allow_html=True)
+            
+            # Add Recent Searches section
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px;'>Recent Job Searches</h3>", unsafe_allow_html=True)
+            
+            # Get recent searches from our storage system
+            recent_searches = get_recent_searches(limit=5)
+            
+            if recent_searches:
+                # Create columns for job title, risk category, and search time
+                recent_col1, recent_col2, recent_col3 = st.columns([3, 2, 2])
+                
+                with recent_col1:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>Job Title</p>", unsafe_allow_html=True)
+                with recent_col2:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>Risk Level</p>", unsafe_allow_html=True)
+                with recent_col3:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>When</p>", unsafe_allow_html=True)
+                
+                # Display recent searches
+                for search in recent_searches:
+                    job_title = search.get("job_title", "Unknown Job")
+                    risk_category = search.get("risk_category", "Unknown")
+                    timestamp = search.get("timestamp")
+                    
+                    # Format timestamp as relative time
+                    if timestamp:
+                        now = datetime.datetime.now()
+                        if isinstance(timestamp, str):
+                            try:
+                                timestamp = datetime.datetime.fromisoformat(timestamp)
+                            except:
+                                timestamp = now
+                                
+                        delta = now - timestamp
+                        if delta.days > 0:
+                            time_ago = f"{delta.days} days ago"
+                        elif delta.seconds >= 3600:
+                            hours = delta.seconds // 3600
+                            time_ago = f"{hours} hour{'s' if hours > 1 else ''} ago"
+                        elif delta.seconds >= 60:
+                            minutes = delta.seconds // 60
+                            time_ago = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+                        else:
+                            time_ago = "Just now"
+                    else:
+                        time_ago = "Recently"
+                    
+                    # Color-code risk categories
+                    if risk_category == "Very High":
+                        risk_color = "#FF4B4B"  # Red
+                    elif risk_category == "High":
+                        risk_color = "#FF8C42"  # Orange
+                    elif risk_category == "Moderate":
+                        risk_color = "#FFCC3E"  # Yellow
+                    elif risk_category == "Low":
+                        risk_color = "#4CAF50"  # Green
+                    else:
+                        risk_color = "#666666"  # Gray
+                    
+                    # Display in columns
+                    col1, col2, col3 = st.columns([3, 2, 2])
+                    with col1:
+                        # Make job title clickable to search again - use a unique key with index
+                        if st.button(job_title, key=f"search_again_{job_title}_{i}_{time_ago}"):
+                            st.session_state.job_title = job_title
+                            st.rerun()
+                    with col2:
+                        st.markdown(f"<p style='color: {risk_color};'>{risk_category}</p>", unsafe_allow_html=True)
+                    with col3:
+                        st.write(time_ago)
+            else:
+                st.info("No recent searches yet. Be the first to analyze a job!")
 
 # Job Comparison Tab - Match original functionality from screenshots
 with tabs[1]:  # Job Comparison tab
