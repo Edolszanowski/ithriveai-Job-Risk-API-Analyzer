@@ -1,10 +1,21 @@
 import trafilatura
 import requests
-from bs4 import BeautifulSoup
 import re
 import random
 import time
 from data_processor import process_job_data
+
+# Try to import BeautifulSoup but continue if it's not available
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    # Create a minimal stub class to prevent crashes
+    class BeautifulSoup:
+        def __init__(self, *args, **kwargs):
+            self.text = args[0] if args else ""
+            
+        def find_all(self, *args, **kwargs):
+            return []
 
 # Cache to store already processed job titles
 job_risk_cache = {}

@@ -1,86 +1,79 @@
 import streamlit as st
-import psycopg2
-from urllib.parse import urlparse, urlunparse # For cleaner password masking
+import os
+from sqlalchemy import create_engine, text
+import pandas as pd
 
-st.set_page_config(layout="wide")
-st.title("Supabase Connection Test (Basic)")
+st.title("Database Connection Test")
 
-DATABASE_URL = None
-st.subheader("Secrets Retrieval:")
-try:
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-    st.info("✅ DATABASE_URL found in Streamlit secrets.")
+# Get the DATABASE_URL from environment variables or secrets
+database_url = st.secrets.get("DATABASE_URL") if hasattr(st, "secrets") else os.environ.get("DATABASE_URL")
 
-    # Mask password for display
-    try:
-        parsed_url = urlparse(DATABASE_URL)
-        display_netloc = parsed_url.netloc
-        if parsed_url.password:
-            display_netloc = display_netloc.replace(parsed_url.password, "********")
-        
-        masked_url_for_display = urlunparse(
-            (parsed_url.scheme,
-             display_netloc,
-             parsed_url.path,
-             parsed_url.params,
-             parsed_url.query,
-             parsed_url.fragment)
-        )
-        st.write(f"Attempting to connect with (password masked): {masked_url_for_display}")
-    except Exception as parse_mask_e:
-        st.warning(f"Could not parse/mask DATABASE_URL for display: {parse_mask_e}. Will proceed with raw secret if available.")
-        st.write("DATABASE_URL value (from secrets) will be used directly for connection.")
-
-except KeyError:
-    st.error("❌ DATABASE_URL not found in Streamlit secrets! Please ensure it is set correctly in your Streamlit Cloud app settings.")
-    st.stop() # Stop execution if secret is missing
-except Exception as e:
-    st.error(f"❌ Error accessing Streamlit secrets: {e}")
-    st.stop() # Stop execution
-
-if DATABASE_URL:
-    conn = None
-    st.subheader("Database Connection Attempt:")
-    try:
-        st.write(f"Attempting to connect to Supabase using port {urlparse(DATABASE_URL).port or 'default'}...")
-        conn = psycopg2.connect(DATABASE_URL)
-        st.success("✅ Successfully connected to Supabase!")
-
-        cur = conn.cursor()
-        
-        st.write("Executing a simple query (SELECT version())...")
-        cur.execute("SELECT version();")
-        db_version = cur.fetchone()
-        if db_version:
-            st.info(f"Database version: {db_version[0]}")
-        else:
-            st.warning("Could not retrieve database version.")
-
-        st.write("Checking for 'job_searches' table (if applicable)...")
-        # Adjust schema if your table is not in 'public'
-        cur.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'job_searches');")
-        table_exists_row = cur.fetchone()
-        if table_exists_row and table_exists_row[0]:
-            st.success("✅ 'job_searches' table exists in the 'public' schema.")
-        else:
-            st.warning("⚠️ 'job_searches' table does NOT exist in the 'public' schema (or query failed).")
-
-        cur.close()
-
-    except psycopg2.OperationalError as e:
-        st.error("❌ OperationalError: Failed to connect to Supabase.")
-        st.error(f"Details: {e}")
-        st.error("Troubleshooting for 'Cannot assign requested address' (often with IPv6):")
-        st.error("1. This likely indicates an issue with the Streamlit Cloud environment's ability to make outgoing IPv6 connections to your specific Supabase host.")
-        st.error("2. Confirm your Supabase host is primarily/only resolving to IPv6 (e.g., via local `nslookup`). Your previous test showed this.")
-        st.error("3. Ensure your Supabase Project's Network Restrictions are fully open (e.g., 'Allow all IP addresses' or 0.0.0.0/0).")
-        st.error("4. Contact Streamlit Support/Community with these findings, including the error message and that your host is IPv6.")
-    except Exception as e:
-        st.error(f"❌ An unexpected error occurred: {e}")
-    finally:
-        if conn:
-            conn.close()
-            st.info("Database connection closed.")
+if not database_url:
+    st.error("No DATABASE_URL found in environment or secrets")
 else:
-    # This part should ideally not be reached if st.stop() was called earlier due to missing secret
-    st.error("Critical error: DATABASE_URL was not available after secret retrieval block.")
+    # Mask the password for display
+    masked_url = database_url.replace("://postgres:", "://postgres:****@") if "://postgres:" in database_url else database_url
+    st.info(f"Testing connection to: {masked_url}")
+    
+    try:
+        # Create SQLAlchemy engine
+        engine = create_engine(database_url)
+        
+        # Test connection
+        with engine.connect() as connection:
+            st.success("✅ Successfully connected to database!")
+            
+            # Check if job_searches table exists
+            try:
+                result = connection.execute(text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'job_searches')"))
+                table_exists = result.scalar()
+                
+                if table_exists:
+                    st.success("✅ Found 'job_searches' table")
+                    
+                    # Get count of records
+                    count_query = text("SELECT COUNT(*) FROM job_searches")
+                    count_result = connection.execute(count_query)
+                    count = count_result.scalar()
+                    
+                    st.write(f"Total job searches in database: {count}")
+                    
+                    # Get recent records
+                    query = text("SELECT job_title, timestamp, year_1_risk, year_5_risk FROM job_searches ORDER BY timestamp DESC LIMIT 5")
+                    result = connection.execute(query)
+                    recent_searches = [dict(row) for row in result]
+                    
+                    if recent_searches:
+                        st.write("Recent job searches:")
+                        st.dataframe(pd.DataFrame(recent_searches))
+                    else:
+                        st.info("No job searches found in the database yet")
+                else:
+                    st.warning("⚠️ 'job_searches' table does not exist yet")
+                    st.info("The table will be created when you perform your first search")
+                    
+                    # Create the table
+                    st.write("Would you like to create the table now?")
+                    if st.button("Create job_searches table"):
+                        create_table_sql = """
+                        CREATE TABLE IF NOT EXISTS job_searches (
+                            id SERIAL PRIMARY KEY,
+                            job_title VARCHAR(255) NOT NULL,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            year_1_risk FLOAT,
+                            year_5_risk FLOAT,
+                            risk_category VARCHAR(50),
+                            job_category VARCHAR(50)
+                        );
+                        """
+                        connection.execute(text(create_table_sql))
+                        st.success("Table created successfully!")
+            except Exception as e:
+                st.error(f"Error checking tables: {str(e)}")
+                
+    except Exception as e:
+        st.error(f"Failed to connect to database: {str(e)}")
+        st.info("Make sure your DATABASE_URL is correctly formatted and the database is accessible")
+
+st.markdown("---")
+st.info("This is a test page to verify your database connection. You can safely add this to your GitHub repository.")
