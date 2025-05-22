@@ -31,15 +31,12 @@ try:
     # Set a very short timeout to avoid hanging the app
     connect_args = {}
     if 'postgresql' in database_url:
-        # Just use a short timeout - removed incompatible options
-        connect_args = {
-            "connect_timeout": 3  # 3 seconds max
-        }
+        connect_args = {"connect_timeout": 3}  # 3 seconds max
     
     engine = create_engine(database_url, connect_args=connect_args)
     # Test connection with a quick timeout
     with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+        conn.execute("SELECT 1")
 except Exception as e:
     print(f"Error connecting to database - using fallback: {str(e)}")
     # Instead of exiting, we'll define our own versions of functions that use fallback data
