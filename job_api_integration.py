@@ -75,6 +75,27 @@ SOC_TO_CATEGORY = {
     "53-": "Transportation and Material Moving"
 }
 
+def get_court_reporter_data():
+    """Get Court Reporter data with proper SOC code."""
+    return {
+        "job_title": "Court Reporter",
+        "occupation_code": "23-2011", 
+        "job_category": "Legal",
+        "automation_probability": 45.0,
+        "risk_scores": {"year_1": 25.0, "year_5": 45.0},
+        "risk_category": "Moderate",
+        "risk_factors": [
+            "AI transcription services are becoming more accurate",
+            "Digital recording technology can capture proceedings automatically", 
+            "Voice recognition software reduces need for manual stenography"
+        ],
+        "protective_factors": [
+            "Legal expertise and terminology knowledge required",
+            "Real-time clarification and correction during proceedings",
+            "Certification and legal accuracy requirements"
+        ]
+    }
+
 def get_project_manager_data():
     """
     Get comprehensive data for Project Manager role.
@@ -758,18 +779,47 @@ def get_job_data(job_title: str) -> Dict[str, Any]:
         return get_web_developer_data()
     elif job_title_lower == "teacher" or job_title_lower == "educator" or job_title_lower == "instructor":
         return get_teacher_data()
+    elif job_title_lower == "court reporter" or job_title_lower == "digital court reporter" or job_title_lower == "stenographer":
+        return get_court_reporter_data()
         
-    # Step 1: Find matching BLS occupation codes
-    occupation_matches = bls_connector.search_occupations(job_title)
-    
-    if not occupation_matches:
-        # Use fallback data from internal database if no matches
-        return get_internal_job_data(job_title)
-    
-    # Use the best match (first result)
-    best_match = occupation_matches[0]
-    occ_code = best_match["code"]
-    standardized_title = best_match["title"]
+    # Step 1: Check if job title exists in database with SOC code
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        try:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(database_url)
+            with engine.connect() as conn:
+                query = text("SELECT soc_code FROM job_titles WHERE LOWER(title) = LOWER(:job_title) LIMIT 1")
+                result = conn.execute(query, {"job_title": job_title})
+                row = result.fetchone()
+                if row and row[0] and row[0] != '00-0000':
+                    occ_code = row[0]
+                    standardized_title = job_title
+                else:
+                    # Try BLS API search as fallback
+                    occupation_matches = bls_connector.search_occupations(job_title)
+                    if not occupation_matches:
+                        return get_internal_job_data(job_title)
+                    best_match = occupation_matches[0]
+                    occ_code = best_match["code"]
+                    standardized_title = best_match["title"]
+        except Exception as e:
+            print(f"Database lookup failed: {e}")
+            # Fallback to BLS API
+            occupation_matches = bls_connector.search_occupations(job_title)
+            if not occupation_matches:
+                return get_internal_job_data(job_title)
+            best_match = occupation_matches[0]
+            occ_code = best_match["code"]
+            standardized_title = best_match["title"]
+    else:
+        # No database, use BLS API
+        occupation_matches = bls_connector.search_occupations(job_title)
+        if not occupation_matches:
+            return get_internal_job_data(job_title)
+        best_match = occupation_matches[0]
+        occ_code = best_match["code"]
+        standardized_title = best_match["title"]
     
     # Step 2: Get occupation data from BLS
     occupation_data = bls_connector.get_occupation_data(occ_code)
