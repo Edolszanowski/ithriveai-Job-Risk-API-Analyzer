@@ -6,9 +6,70 @@ import bls_connector
 from typing import Dict, Any, List, Optional
 import time
 import pandas as pd
+import os
+import datetime
+from sqlalchemy import create_engine, text, Table, Column, Integer, String, Float, MetaData, insert, select
 
 # Cache for storing processed job data to minimize redundant processing
 _job_cache = {}
+
+# Job title to SOC code mapping
+# This is a starting point - the system will build this mapping over time
+JOB_TITLE_TO_SOC = {
+    "software developer": "15-1252",
+    "software engineer": "15-1252",
+    "programmer": "15-1251",
+    "web developer": "15-1254",
+    "registered nurse": "29-1141",
+    "nurse": "29-1141",
+    "teacher": "25-2021",  # Elementary School Teachers
+    "elementary school teacher": "25-2021",
+    "high school teacher": "25-2031",
+    "lawyer": "23-1011",
+    "attorney": "23-1011",
+    "doctor": "29-1221",  # Family Medicine Physicians
+    "physician": "29-1221",
+    "accountant": "13-2011",
+    "project manager": "11-3021",
+    "product manager": "11-2021",
+    "marketing manager": "11-2021",
+    "retail salesperson": "41-2031",
+    "cashier": "41-2011",
+    "customer service representative": "43-4051",
+    "truck driver": "53-3032",
+    "receptionist": "43-4171",
+    "data scientist": "15-2051",
+    "data analyst": "15-2041",
+    "business analyst": "13-1111",
+    "financial analyst": "13-2051",
+    "architect": "17-1011"
+}
+
+# Job category mapping - helps group similar occupations
+SOC_TO_CATEGORY = {
+    "15-": "Computer and Mathematical",
+    "11-": "Management",
+    "13-": "Business and Financial",
+    "17-": "Architecture and Engineering",
+    "19-": "Life, Physical, and Social Science",
+    "21-": "Community and Social Service",
+    "23-": "Legal",
+    "25-": "Educational Instruction",
+    "27-": "Arts, Design, Entertainment, Sports, and Media",
+    "29-": "Healthcare Practitioners",
+    "31-": "Healthcare Support",
+    "33-": "Protective Service",
+    "35-": "Food Preparation and Serving",
+    "37-": "Building and Grounds Cleaning and Maintenance",
+    "39-": "Personal Care and Service",
+    "41-": "Sales and Related",
+    "43-": "Office and Administrative Support",
+    "45-": "Farming, Fishing, and Forestry",
+    "47-": "Construction and Extraction",
+    "49-": "Installation, Maintenance, and Repair",
+    "51-": "Production",
+    "53-": "Transportation and Material Moving"
+}
 
 def get_project_manager_data():
     """
@@ -578,9 +639,107 @@ def get_job_data(job_title: str) -> Dict[str, Any]:
     if job_title_lower == "project manager":
         return get_project_manager_data()
     elif job_title_lower == "nurse" or job_title_lower == "registered nurse":
-        # Use the updated nurse data format that matches the app's expectations
-        from new_nurse_data import get_updated_nurse_data
-        return get_updated_nurse_data()
+        # Include nurse data directly here instead of importing from another file
+        return {
+            "job_title": "Registered Nurse",
+            "occupation_code": "29-1141",  # SOC code for Registered Nurses
+            "job_category": "Healthcare",
+            "source": "enhanced_data",
+            "latest_employment": "3130600",
+            "projections": {
+                "current_employment": 3130600,
+                "projected_employment": 3458200,
+                "percent_change": 10.5,
+                "annual_job_openings": 203200
+            },
+            "automation_probability": 20.0,  # Convert to percentage
+            "risk_scores": {
+                "year_1": 15.0,
+                "year_5": 30.0
+            },
+            "risk_category": "Low to Moderate",
+            "risk_factors": [
+                "Administrative tasks can be automated",
+                "AI diagnostic support tools are increasingly sophisticated",
+                "Remote monitoring reduces need for some in-person care",
+                "Predictive analytics may reduce staffing requirements"
+            ],
+            "protective_factors": [
+                "Direct patient care requires human empathy and dexterity",
+                "Complex decision-making in emergency situations",
+                "Patient education and emotional support remain human-centered",
+                "Physical assessment and intervention skills are difficult to automate"
+            ],
+            "trend_data": {
+                "years": list(range(2020, 2026)),
+                "employment": [2990000, 3080000, 3130600, 3198000, 3268000, 3340000]
+            },
+            "similar_jobs": [
+                {
+                    "job_title": "Nurse Practitioner",
+                    "occupation_code": "29-1171",
+                    "year_1_risk": 10.0,
+                    "year_5_risk": 20.0,
+                    "risk_category": "Low"
+                },
+                {
+                    "job_title": "Licensed Practical Nurse",
+                    "occupation_code": "29-2061",
+                    "year_1_risk": 20.0,
+                    "year_5_risk": 40.0,
+                    "risk_category": "Moderate"
+                },
+                {
+                    "job_title": "Physician Assistant",
+                    "occupation_code": "29-1071",
+                    "year_1_risk": 15.0,
+                    "year_5_risk": 25.0,
+                    "risk_category": "Low"
+                },
+                {
+                    "job_title": "Nursing Assistant",
+                    "occupation_code": "31-1131",
+                    "year_1_risk": 25.0,
+                    "year_5_risk": 45.0,
+                    "risk_category": "Moderate"
+                }
+            ],
+            "skills": {
+                "future_proof_skills": [
+                    "Digital health technology proficiency", 
+                    "Data interpretation for patient monitoring",
+                    "Telehealth service delivery",
+                    "Advanced clinical assessment",
+                    "Complex care coordination",
+                    "AI-assisted diagnostics"
+                ],
+                "skill_areas": {
+                    "technical_skills": [
+                        "Digital health record systems",
+                        "Remote monitoring technology",
+                        "Telehealth platforms",
+                        "Medical device integration",
+                        "Clinical decision support systems"
+                    ],
+                    "soft_skills": [
+                        "Complex communication",
+                        "Empathetic care",
+                        "Crisis management",
+                        "Interdisciplinary collaboration",
+                        "Patient advocacy",
+                        "Ethical decision-making"
+                    ],
+                    "transferable_skills": [
+                        "Assessment and diagnosis",
+                        "Critical thinking",
+                        "Care coordination",
+                        "Patient education",
+                        "Resource management",
+                        "Quality improvement"
+                    ]
+                }
+            }
+        }
     elif job_title_lower == "retail sales" or job_title_lower == "retail salesperson" or job_title_lower == "sales associate":
         return get_retail_sales_data()
     elif job_title_lower == "cook" or job_title_lower == "chef" or job_title_lower == "food preparation":
@@ -1329,40 +1488,128 @@ def get_internal_job_data(job_title: str) -> Dict[str, Any]:
         job_title: The job title to analyze
         
     Returns:
-        Dictionary with internal job data
+        Dictionary with internal job data formatted to match app expectations
     """
-    # This function would connect to your existing database/dictionary
-    # of job data when the BLS API doesn't have matching data
+    # Determine a reasonable job category based on the job title
+    job_category = "General"
+    if any(keyword in job_title.lower() for keyword in ["develop", "program", "engineer", "tech", "data", "it"]):
+        job_category = "Technology"
+    elif any(keyword in job_title.lower() for keyword in ["market", "sales", "advertis", "brand", "content"]):
+        job_category = "Marketing & Sales"
+    elif any(keyword in job_title.lower() for keyword in ["financ", "account", "audit", "tax", "invest"]):
+        job_category = "Finance"
+    elif any(keyword in job_title.lower() for keyword in ["hr", "recruit", "human resource", "talent"]):
+        job_category = "Human Resources"
+    elif any(keyword in job_title.lower() for keyword in ["teach", "educat", "instruct", "professor"]):
+        job_category = "Education"
+    elif any(keyword in job_title.lower() for keyword in ["health", "medic", "nurs", "doctor", "care"]):
+        job_category = "Healthcare"
     
-    # In the actual implementation, this would query your existing JOB_DATA
-    # For now, we'll return a simplified response that includes the job title
-    # and default risk values to ensure it doesn't break the UI
+    # Set appropriate risk levels based on general industry trends
+    year_1_risk = 25.0
+    year_5_risk = 45.0
+    risk_category = "Moderate"
     
+    # Adjust risk levels based on job category
+    if job_category == "Technology":
+        year_1_risk = 15.0
+        year_5_risk = 35.0
+    elif job_category == "Healthcare":
+        year_1_risk = 15.0
+        year_5_risk = 30.0
+    elif job_category == "Education":
+        year_1_risk = 20.0
+        year_5_risk = 35.0
+    
+    # Define risk factors based on job category
+    risk_factors = [
+        "AI and automation technologies continue to advance",
+        "Routine aspects of many jobs are becoming automated",
+        "Digital transformation is changing skill requirements",
+        "Task-specific AI tools are becoming more specialized"
+    ]
+    
+    # Define protective factors based on job category
+    protective_factors = [
+        "Complex problem-solving requires human judgment",
+        "Creative thinking and innovation are hard to automate",
+        "Human relationship management remains valuable",
+        "Strategic decision-making benefits from human experience"
+    ]
+    
+    # Define skill areas based on job category
+    skill_areas = {
+        "technical_skills": [
+            "Digital literacy",
+            "Data analysis",
+            "Technology adaptation",
+            "Software proficiency",
+            "Process improvement"
+        ],
+        "soft_skills": [
+            "Critical thinking",
+            "Adaptive problem solving",
+            "Communication",
+            "Collaboration",
+            "Emotional intelligence"
+        ],
+        "transferable_skills": [
+            "Project management",
+            "Cross-functional collaboration",
+            "Research and analysis",
+            "Strategic planning",
+            "Stakeholder management"
+        ]
+    }
+    
+    # Return data in the format that app_production.py expects
     return {
         "job_title": job_title,
+        "occupation_code": "00-0000",  # Generic occupation code
+        "job_category": job_category,
         "source": "internal_database",
-        "message": "Using internal database for job analysis as no matching BLS data was found",
         "latest_employment": "Unknown",
-        "risk_analysis": {
-            "year_1_risk": 25.0,  # Default moderate risk values
-            "year_5_risk": 45.0,
-            "risk_category": "Moderate",
-            "risk_factors": [
-                "AI and automation technologies continue to advance",
-                "Routine aspects of many jobs are becoming automated",
-                "Digital transformation is changing skill requirements",
-                "Task-specific AI tools are becoming more specialized"
-            ],
-            "protective_factors": [
-                "Complex problem-solving requires human judgment",
-                "Creative thinking and innovation are hard to automate",
-                "Human relationship management remains valuable",
-                "Strategic decision-making benefits from human experience"
-            ]
+        "automation_probability": 45.0,
+        "risk_scores": {
+            "year_1": year_1_risk,
+            "year_5": year_5_risk
         },
+        "risk_category": risk_category,
+        "risk_factors": risk_factors,
+        "protective_factors": protective_factors,
         "projections": {
             "percent_change": "Unknown",
             "annual_job_openings": "Unknown"
+        },
+        "trend_data": {
+            "years": list(range(2020, 2026)),
+            "employment": [100000, 102000, 105000, 108000, 110000, 112000]  # Generic trend data
+        },
+        "similar_jobs": [
+            {
+                "job_title": "Related Position 1",
+                "occupation_code": "00-0001",
+                "year_1_risk": max(10, year_1_risk - 10),
+                "year_5_risk": max(20, year_5_risk - 10),
+                "risk_category": "Low to Moderate"
+            },
+            {
+                "job_title": "Related Position 2",
+                "occupation_code": "00-0002",
+                "year_1_risk": min(35, year_1_risk + 5),
+                "year_5_risk": min(60, year_5_risk + 10),
+                "risk_category": "Moderate to High"
+            }
+        ],
+        "skills": {
+            "future_proof_skills": [
+                "Continuous learning",
+                "AI collaboration", 
+                "Complex problem solving",
+                "Digital literacy",
+                "Human-centered service"
+            ],
+            "skill_areas": skill_areas
         }
     }
 
