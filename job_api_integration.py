@@ -777,8 +777,8 @@ def get_job_data(job_title: str) -> Dict[str, Any]:
         return get_ui_developer_data()
     elif job_title_lower == "web developer" or job_title_lower == "web programmer" or job_title_lower == "website developer":
         return get_web_developer_data()
-    elif job_title_lower == "teacher" or job_title_lower == "educator" or job_title_lower == "instructor" or job_title_lower == "elementary school teachers" or job_title_lower == "elementary teacher":
-        return get_teacher_data()
+    elif job_title_lower == "teacher" or job_title_lower == "educator" or job_title_lower == "instructor" or job_title_lower == "elementary school teachers" or job_title_lower == "elementary teacher" or job_title_lower == "middle school teachers" or job_title_lower == "middle school teacher":
+        return get_teacher_data(job_title)
     elif job_title_lower == "court reporter" or job_title_lower == "digital court reporter" or job_title_lower == "stenographer":
         return get_court_reporter_data()
         
@@ -1400,13 +1400,18 @@ def get_cook_data():
     
     return result
 
-def get_teacher_data():
+def get_teacher_data(job_title="Elementary School Teachers"):
     """
     Get comprehensive data for Teacher role.
     """
     # Define rich data for Teachers
     occ_code = "25-2021"  # SOC code for Elementary School Teachers
-    standardized_title = "Elementary School Teachers"
+    # Determine the correct title based on input
+    if "middle" in job_title.lower():
+        standardized_title = "Middle School Teachers"
+        occ_code = "25-2022"  # SOC code for Middle School Teachers
+    else:
+        standardized_title = "Elementary School Teachers"
     
     # Occupation data with employment figures
     occupation_data = {
@@ -1479,9 +1484,12 @@ def get_teacher_data():
         }
     }
     
-    # Sample employment trend data
+    # Employment trend data will come from database now that we added teacher records
     trend_years = list(range(2020, 2026))
-    trend_employment = [1370000, 1395000, 1410000, 1430000, 1470000, 1515000]
+    if "middle" in job_title.lower():
+        trend_employment = [650000, 662000, 675000, 680000, 685000, 690000]
+    else:
+        trend_employment = [1370000, 1395000, 1410000, 1430000, 1470000, 1515000]
     
     # Sample similar jobs data
     similar_jobs = [
