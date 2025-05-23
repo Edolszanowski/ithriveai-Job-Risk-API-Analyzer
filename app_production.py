@@ -6,8 +6,8 @@ import datetime
 import os
 import sys
 # Force reload: Court Reporter special case added
+import job_api_integration_database_only as job_api_integration
 import simple_comparison
-import job_api_integration
 import ai_job_displacement
 import time
 import re
@@ -201,6 +201,11 @@ with tabs[0]:  # Single Job Analysis tab
         help="Type a job title and select from matching suggestions"
     )
     
+    # Clear Entry button - refreshes the entire app
+    if st.button("🗑️ Clear Entry", key="clear_button_single"):
+        # Clear by refreshing the page which resets all widgets
+        st.rerun()
+    
     # Normalize the job title for special cases
     normalized_job_title = search_job_title.lower().strip() if search_job_title else ""
     
@@ -208,10 +213,8 @@ with tabs[0]:  # Single Job Analysis tab
     if re.search(r'diagnos(i(c|s|t|cian)|e)', normalized_job_title):
         search_job_title = "Diagnosician"
     
-    # Add search button and clear button
-    col1, col2 = st.columns([1, 4])
-    search_clicked = col1.button("Analyze Job Risk")
-    clear_search = col2.button("Clear Entry")
+    # Add search button
+    search_clicked = st.button("Analyze Job Risk")
     
     # Only search when button is clicked and there's a job title
     # Check for data refresh when the app starts
@@ -766,7 +769,8 @@ with tabs[0]:  # Single Job Analysis tab
                     col1, col2, col3 = st.columns([3, 2, 2])
                     with col1:
                         # Make job title clickable to search again - use a unique key with index
-                        if st.button(job_title, key=f"search_again_{job_title}_{i}_{time_ago}"):
+                        search_key = f"search_{job_title.replace(' ', '_')}_{i}_{abs(hash(str(search))) % 10000}"
+                        if st.button(job_title, key=search_key):
                             st.session_state.job_title = job_title
                             st.rerun()
                     with col2:
@@ -845,8 +849,8 @@ with tabs[1]:  # Job Comparison tab
         progress_text.write("All jobs processed. Generating comparison...")
         
         # Now we have all job data, proceed with visualization
-        # Get data for selected jobs
-        job_data = simple_comparison.get_job_data(st.session_state.selected_jobs)
+        # Get data for selected jobs using the comparison function
+        job_data = simple_comparison.get_job_comparison_data(st.session_state.selected_jobs)
         
         # Create visualization tabs for different comparison views
         comparison_tabs = st.tabs(["Comparison Chart", "Comparative Analysis", "Risk Heatmap", "Risk Factors"])
