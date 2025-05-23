@@ -5,19 +5,26 @@ import json
 import datetime
 import os
 import sys
+# Production deployment version - uses database-only integration
+import job_api_integration_database_only as job_api_integration
 import simple_comparison
-import job_api_integration
 import ai_job_displacement
 import time
 import re
 import career_navigator
 from sqlalchemy import create_engine, text
 
-# Import the enhanced autocomplete functionality
+# Import the autocomplete functionality
 from job_title_autocomplete_v2 import job_title_autocomplete, load_job_titles_from_db
 
 # Check if BLS API key is set
 bls_api_key = os.environ.get('BLS_API_KEY')
+
+# Handle health check requests
+query_params = st.query_params
+if query_params.get("health_check") == "true":
+    st.text("OK")
+    st.stop()
 
 # Page configuration
 st.set_page_config(
@@ -144,7 +151,7 @@ except:
     database_available = False
 
 def check_data_refresh():
-    """Check if data needs to be refreshed (daily schedule to keep database active)"""
+    """Check if data needs to be refreshed (daily schedule to keep Supabase active)"""
     try:
         with open("last_refresh.json", "r") as f:
             refresh_data = json.load(f)
@@ -174,17 +181,6 @@ def check_data_refresh():
             json.dump({"date": datetime.datetime.now().isoformat()}, f)
         return True
 
-# Get cached job data to improve performance
-@st.cache_data(ttl=3600)
-def get_cached_job_data(job_title):
-    """Cache job data to improve performance"""
-    try:
-        job_data = job_api_integration.get_job_data(job_title)
-        return job_data
-    except Exception as e:
-        st.error(f"Error fetching job data: {str(e)}")
-        return None
-
 # Tabs for different sections - use original tab names from screenshots
 tabs = st.tabs(["Single Job Analysis", "Job Comparison"])
 
@@ -196,7 +192,7 @@ with tabs[0]:  # Single Job Analysis tab
     if bls_api_key:
         st.info("📊 Using real-time data from the Bureau of Labor Statistics API")
     
-    # Job title input with enhanced autocomplete functionality
+    # Job title input with autocomplete functionality
     st.markdown("Enter any job title to analyze")
     search_job_title = job_title_autocomplete(
         label="Enter your job title",
@@ -205,6 +201,11 @@ with tabs[0]:  # Single Job Analysis tab
         help="Type a job title and select from matching suggestions"
     )
     
+    # Clear Entry button - refreshes the entire app
+    if st.button("🗑️ Clear Entry", key="clear_button_single"):
+        # Clear by refreshing the page which resets all widgets
+        st.rerun()
+    
     # Normalize the job title for special cases
     normalized_job_title = search_job_title.lower().strip() if search_job_title else ""
     
@@ -212,15 +213,8 @@ with tabs[0]:  # Single Job Analysis tab
     if re.search(r'diagnos(i(c|s|t|cian)|e)', normalized_job_title):
         search_job_title = "Diagnosician"
     
-    # Add search button and clear button
-    col1, col2 = st.columns([1, 4])
-    search_clicked = col1.button("Analyze Job Risk")
-    clear_search = col2.button("Clear Entry")
-    
-    # Clear the search when clear button is clicked
-    if clear_search:
-        st.session_state.job_title_search = ""
-        st.rerun()
+    # Add search button
+    search_clicked = st.button("Analyze Job Risk")
     
     # Only search when button is clicked and there's a job title
     # Check for data refresh when the app starts
@@ -230,11 +224,8 @@ with tabs[0]:  # Single Job Analysis tab
         # Show loading spinner during API calls and data processing
         with st.spinner(f"Analyzing {search_job_title}..."):
             try:
-                # Get job data with optimized API calls and caching
-                job_data = get_cached_job_data(search_job_title)
-                if not job_data:
-                    # Fallback to direct API call if caching fails
-                    job_data = job_api_integration.get_job_data(search_job_title)
+                # Get job data with optimized API calls
+                job_data = job_api_integration.get_job_data(search_job_title)
             except ValueError as e:
                 if "BLS_API_KEY" in str(e):
                     st.error("The Bureau of Labor Statistics (BLS) API key is needed to fetch real-time data. Using pre-loaded job data instead.")
@@ -291,11 +282,26 @@ with tabs[0]:  # Single Job Analysis tab
                 automation_prob = job_data.get("automation_probability", 45.0)
                 st.markdown(f"**Task Automation Probability:** {automation_prob:.1f}% of job tasks could be automated")
                 
-                # Wage trend
-                st.markdown("**Wage Trend:** Stable to increasing for specialized roles")
+                # Wage trend from BLS data
+                bls_data = job_data.get("bls_data", {})
+                median_wage = bls_data.get("median_wage")
+                if median_wage:
+                    st.markdown(f"**Median Annual Wage:** ${median_wage:,.0f}")
+                else:
+                    st.markdown("**Wage Data:** Contact employer for current wage information")
                 
-                # Employment growth
-                st.markdown("**Employment Growth:** Moderate growth projected")
+                # Employment growth from BLS data
+                employment_change = bls_data.get("employment_change_percent")
+                if employment_change is not None:
+                    if employment_change > 0:
+                        growth_text = f"Growing at {employment_change:.1f}% (faster than average)"
+                    elif employment_change < 0:
+                        growth_text = f"Declining at {abs(employment_change):.1f}%"
+                    else:
+                        growth_text = "Stable employment expected"
+                    st.markdown(f"**Employment Growth:** {growth_text}")
+                else:
+                    st.markdown("**Employment Growth:** See BLS projections for current data")
             
             with risk_gauge_col:
                 # Overall risk and gauge - center column
@@ -366,325 +372,720 @@ with tabs[0]:  # Single Job Analysis tab
                 
                 # Get risk factors from job data or provide job-specific defaults based on searched job title
                 default_risk_factors = [
-                    "Task automation increasingly handles routine work",
-                    "AI tools can perform basic analysis and reporting",
-                    "Software solutions automate administrative tasks",
-                    "Digital platforms reduce need for human oversight"
+                    "Project management software increasingly automates routine tasks",
+                    "AI tools can handle resource allocation and scheduling",
+                    "Reporting and documentation can be automated",
+                    "Basic project tracking requires less human oversight"
                 ]
                 
-                # Display risk factors
+                # Set different default risk factors based on job category
+                if "developer" in search_job_title.lower() or "programmer" in search_job_title.lower():
+                    default_risk_factors = [
+                        "Automated code generation reduces need for routine coding",
+                        "AI tools can debug and optimize existing code",
+                        "Low-code/no-code platforms replace basic development tasks",
+                        "Standardized development work increasingly automated"
+                    ]
+                elif "analyst" in search_job_title.lower():
+                    default_risk_factors = [
+                        "AI tools automate data collection and cleaning",
+                        "Automated report generation reduces manual work",
+                        "Pattern recognition algorithms identify insights faster",
+                        "Dashboard automation reduces need for routine analysis"
+                    ]
+                elif "designer" in search_job_title.lower():
+                    default_risk_factors = [
+                        "AI design tools can generate layouts and compositions",
+                        "Style transfer algorithms automate visual consistency",
+                        "Template-based design reduces need for custom work",
+                        "Generative design tools create multiple options quickly"
+                    ]
+                    
                 risk_factors = job_data.get("risk_factors", default_risk_factors)
-                for factor in risk_factors:
-                    st.markdown(f"• {factor}")
                 
-                # Display protective factors
+                for factor in risk_factors:
+                    st.markdown(f"❌ {factor}")
+                
+                # Protective Factors
                 st.markdown("<h3 style='color: #0084FF; font-size: 20px; margin-top: 20px;'>Protective Factors</h3>", unsafe_allow_html=True)
                 
-                # Get protective factors or provide job-specific defaults
+                # Set different default protective factors based on job category
                 default_protective_factors = [
-                    "Complex problem-solving requiring human judgment",
-                    "Interpersonal skills and relationship building",
-                    "Creative thinking and innovation capabilities",
-                    "Adaptability to changing situations and requirements"
+                    "Complex stakeholder management requires human relationships",
+                    "Strategic decision-making needs human judgment",
+                    "Team leadership and motivation remain human-centered",
+                    "Crisis management and problem-solving benefit from human experience"
                 ]
                 
-                # Display protective factors
+                if "developer" in search_job_title.lower() or "programmer" in search_job_title.lower():
+                    default_protective_factors = [
+                        "Complex system architecture requires human judgment",
+                        "User-centered design needs human empathy and creativity",
+                        "Novel problem-solving is difficult to automate",
+                        "Client collaboration and requirement gathering need human skills"
+                    ]
+                elif "analyst" in search_job_title.lower():
+                    default_protective_factors = [
+                        "Strategic insight requires business context and judgment",
+                        "Complex problem definition needs human framing",
+                        "Interpreting findings within broader context requires experience",
+                        "Communicating insights to stakeholders needs human skills"
+                    ]
+                elif "designer" in search_job_title.lower():
+                    default_protective_factors = [
+                        "Creative direction and concept development need human creativity",
+                        "Understanding emotional impact requires human empathy",
+                        "Cultural context and sensitivity need human judgment",
+                        "Client relationship management requires human connections"
+                    ]
+                
                 protective_factors = job_data.get("protective_factors", default_protective_factors)
+                
                 for factor in protective_factors:
-                    st.markdown(f"• {factor}")
+                    st.markdown(f"✅ {factor}")
             
-            # Add a divider
-            st.markdown("---")
+            # Analysis section - full width
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px; margin-top: 20px;'>Key Insights</h3>", unsafe_allow_html=True)
             
-            # Add analysis and recommendation sections - full width
-            st.markdown("<h3 style='color: #0084FF; font-size: 22px;'>Analysis</h3>", unsafe_allow_html=True)
+            # Create job-specific analysis text based on search term
+            job_title_cleaned = search_job_title.strip()
             
-            # Get analysis or provide job-specific default
-            default_analysis = f"""
-            The {search_job_title} role faces {risk_category.lower()} displacement risk from AI over the next 5 years. 
-            While AI and automation tools increasingly handle routine aspects of the job, human professionals who excel 
-            at complex problem-solving, creativity, and stakeholder management will remain valuable.
+            # Define a default analysis for any job
+            default_analysis = f"{job_title_cleaned} faces changes due to advancing AI technologies. Roles requiring human judgment, creativity, and complex social interactions will remain most protected from automation. Professionals who develop skills in AI collaboration, strategic thinking, and specialized expertise will be best positioned for the changing job market."
             
-            The most significant impacts will be seen in the automation of repetitive tasks, allowing professionals 
-            to focus on higher-value activities that require human judgment and creativity.
-            """
+            # Job-specific analysis templates
+            job_analyses = {
+                "project manager": f"Project Managers face moderate to high displacement risk as AI tools advance. While routine project tracking and documentation are increasingly automated, roles requiring complex stakeholder management, strategic thinking, and leadership will remain valuable. Project managers who develop skills in AI oversight, strategic leadership, and change management will be more resilient to automation.",
+                
+                "developer": f"Software Developers are experiencing significant transformation due to AI advancements in code generation and optimization. While routine coding tasks are increasingly automated, developers who specialize in complex architecture, novel problem-solving, and human-centered design will remain valuable. Focus on developing skills in AI integration, system architecture, and specialized domain knowledge to remain competitive.",
+                
+                "programmer": f"Programmers face significant transformation due to AI advancements in code generation and optimization. While routine coding tasks are increasingly automated, programmers who specialize in complex architecture, novel problem-solving, and human-centered design will remain valuable. Focus on developing skills in AI integration, system architecture, and specialized domain knowledge to remain competitive.",
+                
+                "analyst": f"Analysts are being transformed by automated data processing and insight generation tools. While data collection and basic analysis are increasingly automated, analysts who can define complex problems, provide strategic context to findings, and communicate effectively with stakeholders will remain essential. Developing skills in advanced analytics, business strategy, and AI-assisted analysis will enhance career resilience.",
+                
+                "designer": f"Designers are evolving as AI tools enhance creative workflows. While basic design tasks and template-based work face automation, designers who excel at concept development, emotional connection, and creative direction will continue to be valued. Focus on developing skills in design strategy, creative direction, and human experience design to stay ahead of automation trends.",
+                
+                "manager": f"Managers face moderate disruption as AI tools automate routine management tasks. While administrative aspects of management are increasingly handled by software, managers who excel at leadership, strategic thinking, and complex stakeholder relationships will remain essential. Developing skills in AI-enhanced decision making, change management, and strategic leadership will strengthen career resilience.",
+                
+                "teacher": f"Teachers face a changing landscape as AI tools automate content creation and basic assessment. However, the core aspects of teaching—mentorship, emotional support, individualized guidance, and inspiring curiosity—remain deeply human. Teachers who integrate AI tools while focusing on relationship-building and higher-order thinking skills will thrive in the evolving educational environment.",
+                
+                "nurse": f"Nurses remain relatively protected from AI displacement due to the high degree of human care, emotional intelligence, and complex decision-making required. While some diagnostic and administrative tasks may be automated, the hands-on patient care, clinical assessment, and compassionate support that nurses provide cannot be easily replicated by AI systems.",
+                
+                "doctor": f"Doctors face partial automation of routine diagnostic tasks, but the core aspects of medicine—complex reasoning, ethical judgment, and patient relationships—remain highly resistant to automation. Physicians who learn to effectively collaborate with AI diagnostic tools while focusing on complex cases and patient-centered care will be most successful in the changing healthcare landscape.",
+            }
             
-            analysis = job_data.get("analysis", default_analysis)
-            st.markdown(f"{analysis}")
+            # Check if the job title contains any of our predefined analyses
+            selected_analysis = default_analysis
+            for key, analysis in job_analyses.items():
+                if key in job_title_cleaned.lower():
+                    selected_analysis = analysis
+                    break
             
-            # Display Career Navigator button
-            st.markdown("<h3 style='color: #0084FF; font-size: 22px;'>Career Navigator</h3>", unsafe_allow_html=True)
-            st.markdown("Get personalized skill recommendations and career transition guidance.")
+            # Use provided analysis if available, otherwise use our job-specific default
+            analysis_text = job_data.get("analysis", selected_analysis)
+            st.markdown(analysis_text)
             
-            # Career navigator with HTML element
-            if st.button("Launch Career Navigator"):
-                with st.spinner("Loading Career Navigator..."):
-                    time.sleep(1)  # Simulate loading
-                    # Use iframe to display career navigator content
-                    career_html = career_navigator.get_html()
-                    st.markdown(career_html, unsafe_allow_html=True)
+            # Employment Trend Chart
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px; margin-top: 20px;'>Employment Trend</h3>", unsafe_allow_html=True)
+            
+            # Get real employment trend data from job_data
+            trend_data = job_data.get("trend_data", {})
+            if trend_data and "years" in trend_data and "employment" in trend_data:
+                years = trend_data["years"]
+                employment_values = trend_data["employment"]
+            else:
+                # Get SOC-specific employment data from database or API
+                occupation_code = job_data.get("occupation_code", "00-0000")
+                if occupation_code != "00-0000" and database_available:
+                    try:
+                        # Get employment data for this specific SOC code
+                        import os
+                        from sqlalchemy import create_engine, text
+                        db_url = os.environ.get('DATABASE_URL')
+                        engine = create_engine(db_url)
+                        with engine.connect() as conn:
+                            query = text("SELECT current_employment, projected_employment FROM bls_job_data WHERE occupation_code = :soc_code LIMIT 1")
+                            result = conn.execute(query, {"soc_code": occupation_code})
+                            row = result.fetchone()
+                            if row and row[0]:
+                                current_emp = int(row[0]) if row[0] else 100000
+                                projected_emp = int(row[1]) if row[1] else current_emp * 1.1
+                                
+                                # Create realistic trend data
+                                years = [2020, 2021, 2022, 2023, 2024, 2025]
+                                # Calculate trend from current to projected
+                                growth_factor = (projected_emp / current_emp) ** (1/5)  # 5-year growth
+                                base_2020 = current_emp / (growth_factor ** 3)  # Work backwards to 2020
+                                employment_values = [int(base_2020 * (growth_factor ** i)) for i in range(6)]
+                            else:
+                                # No fallback data - show message if no real BLS data
+                                years = [2020, 2021, 2022, 2023, 2024, 2025]
+                                employment_values = [0, 0, 0, 0, 0, 0]  # Will show as "Data not available"
+                    except Exception as e:
+                        # No fallback - only real BLS data
+                        years = [2020, 2021, 2022, 2023, 2024, 2025]
+                        employment_values = [0, 0, 0, 0, 0, 0]
+                else:
+                    # No fallback - only show real BLS data
+                    years = [2020, 2021, 2022, 2023, 2024, 2025]
+                    employment_values = [0, 0, 0, 0, 0, 0]
+            
+            # Create employment trend chart only with real BLS data
+            if employment_values and any(val > 0 for val in employment_values):
+                trend_fig = go.Figure()
+                trend_fig.add_trace(go.Scatter(
+                    x=years,
+                    y=employment_values,
+                    mode='lines+markers',
+                    name='Employment',
+                    line=dict(color='#0084FF', width=2),
+                    marker=dict(size=8)
+                ))
+                
+                trend_fig.update_layout(
+                    title=f'Employment Trend for {search_job_title} (2020-2025)',
+                    xaxis_title='Year',
+                    yaxis_title='Number of Jobs',
+                    height=350,
+                    margin=dict(l=40, r=40, t=60, b=40)
+                )
+                
+                st.plotly_chart(trend_fig, use_container_width=True)
+            else:
+                st.info("📊 **Employment trend data from Bureau of Labor Statistics not yet available for this position.** Analysis shows current risk factors and projections based on job category research.")
+            
+            # Similar Jobs section
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px; margin-top: 20px;'>Similar Jobs</h3>", unsafe_allow_html=True)
+            
+            # Get similar jobs data from the job_data response
+            # The API returns similar_jobs in a specific format that we need to adapt
+            raw_similar_jobs = job_data.get("similar_jobs", [])
+            similar_jobs = []
+            
+            # Convert from API format to our display format if data exists
+            if raw_similar_jobs and len(raw_similar_jobs) > 0:
+                for job in raw_similar_jobs:
+                    # Handle different data formats from the API
+                    if "job_title" in job and "year_5_risk" in job:
+                        # Handle percentage vs decimal format
+                        year_5_risk = job["year_5_risk"] / 100 if job["year_5_risk"] > 1 else job["year_5_risk"]
+                        year_1_risk = job["year_1_risk"] / 100 if job["year_1_risk"] > 1 else job["year_1_risk"]
+                        
+                        similar_jobs.append({
+                            "title": job["job_title"],
+                            "year_5_risk": year_5_risk,
+                            "year_1_risk": year_1_risk
+                        })
+                    elif "title" in job and "year_5_risk" in job:
+                        similar_jobs.append(job)
+            
+            # Ensure similar jobs data is always available for comparison
+            if not similar_jobs or len(similar_jobs) == 0:
+                # Provide default similar jobs data if none exists
+                if "project manager" in search_job_title.lower():
+                    similar_jobs = [
+                        {"title": "Program Manager", "year_5_risk": 0.55, "year_1_risk": 0.30},
+                        {"title": "Product Manager", "year_5_risk": 0.45, "year_1_risk": 0.25},
+                        {"title": "Construction Manager", "year_5_risk": 0.40, "year_1_risk": 0.20},
+                        {"title": "Operations Manager", "year_5_risk": 0.65, "year_1_risk": 0.40}
+                    ]
+                elif "developer" in search_job_title.lower() or "programmer" in search_job_title.lower():
+                    similar_jobs = [
+                        {"title": "Frontend Developer", "year_5_risk": 0.60, "year_1_risk": 0.35},
+                        {"title": "Backend Developer", "year_5_risk": 0.45, "year_1_risk": 0.25},
+                        {"title": "DevOps Engineer", "year_5_risk": 0.40, "year_1_risk": 0.20},
+                        {"title": "Software Architect", "year_5_risk": 0.35, "year_1_risk": 0.15}
+                    ]
+                elif "analyst" in search_job_title.lower():
+                    similar_jobs = [
+                        {"title": "Data Analyst", "year_5_risk": 0.65, "year_1_risk": 0.40},
+                        {"title": "Business Analyst", "year_5_risk": 0.60, "year_1_risk": 0.35},
+                        {"title": "Financial Analyst", "year_5_risk": 0.50, "year_1_risk": 0.30},
+                        {"title": "Research Analyst", "year_5_risk": 0.45, "year_1_risk": 0.25}
+                    ]
+                else:
+                    # Generic similar jobs for any other job title
+                    similar_jobs = [
+                        {"title": "Team Lead", "year_5_risk": 0.50, "year_1_risk": 0.25},
+                        {"title": "Department Manager", "year_5_risk": 0.40, "year_1_risk": 0.20},
+                        {"title": "Director", "year_5_risk": 0.35, "year_1_risk": 0.15},
+                        {"title": "Individual Contributor", "year_5_risk": 0.60, "year_1_risk": 0.35}
+                    ]
+                    
+            if similar_jobs:
+                # Create dataframe for table
+                similar_df = pd.DataFrame(similar_jobs)
+                
+                # Create chart first - ensure we have valid data for all elements
+                job_titles = [job.get("title", "Untitled") for job in similar_jobs]
+                
+                # Handle possible None values in risk data
+                risk_values = []
+                for job in similar_jobs:
+                    risk = job.get("year_5_risk", 0)
+                    if risk is None:
+                        risk = 0
+                    risk_values.append(risk * 100)  # Convert to percentages
+                
+                similar_fig = go.Figure()
+                similar_fig.add_trace(go.Bar(
+                    x=job_titles,
+                    y=risk_values,
+                    marker_color='#FFA500',
+                    text=[f"{val:.1f}%" for val in risk_values],
+                    textposition='auto'
+                ))
+                
+                # Add colorbar for reference
+                similar_fig.update_layout(
+                    title="AI Displacement Risk for Similar Jobs",
+                    xaxis_title="Job Title",
+                    yaxis_title="5-Year Risk (%)",
+                    height=400,
+                    margin=dict(l=40, r=40, t=60, b=40),
+                    coloraxis=dict(
+                        colorscale='RdYlGn_r',
+                        showscale=True,
+                        cmin=0,
+                        cmax=100,
+                        colorbar=dict(
+                            title="5-Year Risk (%)",
+                            thickness=15,
+                            len=0.5,
+                            y=0.5,
+                            x=1.1
+                        )
+                    )
+                )
+                
+                st.plotly_chart(similar_fig, use_container_width=True)
+                
+                # Add comparison suggestion text
+                st.markdown("Compare risk levels of similar occupations:")
+                
+                # Create table with more detailed risk data
+                if len(similar_jobs) > 0:
+                    # Add risk categories
+                    similar_data = []
+                    for i, job in enumerate(similar_jobs):
+                        risk = job.get("year_5_risk", 0) * 100
+                        category = "High" if risk >= 60 else "Moderate" if risk >= 30 else "Low"
+                        # Make sure we have values for both risks, with fallbacks if missing
+                        year_5_risk = job.get("year_5_risk", 0)
+                        if year_5_risk is None:
+                            year_5_risk = 0
+                        risk = year_5_risk * 100
+                            
+                        year_1_risk = job.get("year_1_risk")
+                        if year_1_risk is None:
+                            year_1_risk = risk * 0.6 / 100  # Convert back to decimal for consistent calculation
+                            
+                        similar_data.append({
+                            "Job Title": job.get("title", ""),
+                            "1-Year Risk (%)": f"{year_1_risk * 100:.1f}%",
+                            "5-Year Risk (%)": f"{risk:.1f}%",
+                            "Risk Category": category
+                        })
+                    
+                    # Create and display dataframe
+                    comparison_df = pd.DataFrame(similar_data)
+                    st.dataframe(comparison_df, use_container_width=True)
+            
+            # Risk Assessment Summary
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px;'>Risk Assessment Summary</h3>", unsafe_allow_html=True)
+            
+            summary_text = job_data.get("summary", "Based on current AI trends and job market analysis, this role is experiencing significant changes due to automation and AI technologies. Skills in human-centric areas like leadership, creativity, and complex problem-solving will be increasingly valuable as routine aspects become automated.")
+            st.markdown(summary_text)
+            
+            # Call to action for Career Navigator
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px;'>Get Your Personalized Career Plan</h3>", unsafe_allow_html=True)
+            st.markdown("Our AI-powered Career Navigator can help you develop a personalized plan to adapt to these changes and thrive in your career.", unsafe_allow_html=True)
+            
+            # Get HTML from career_navigator module to avoid escaping issues
+            st.markdown(career_navigator.get_html(), unsafe_allow_html=True)
+            
+            # Add Recent Searches section
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #0084FF; font-size: 20px;'>Recent Job Searches</h3>", unsafe_allow_html=True)
+            
+            # Get recent searches from our storage system
+            recent_searches = get_recent_searches(limit=5)
+            
+            if recent_searches:
+                # Create columns for job title, risk category, and search time
+                recent_col1, recent_col2, recent_col3 = st.columns([3, 2, 2])
+                
+                with recent_col1:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>Job Title</p>", unsafe_allow_html=True)
+                with recent_col2:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>Risk Level</p>", unsafe_allow_html=True)
+                with recent_col3:
+                    st.markdown("<p style='color: #666666; font-weight: bold;'>When</p>", unsafe_allow_html=True)
+                
+                # Display recent searches
+                for search in recent_searches:
+                    job_title = search.get("job_title", "Unknown Job")
+                    risk_category = search.get("risk_category", "Unknown")
+                    timestamp = search.get("timestamp")
+                    
+                    # Format timestamp as relative time
+                    if timestamp:
+                        now = datetime.datetime.now()
+                        if isinstance(timestamp, str):
+                            try:
+                                timestamp = datetime.datetime.fromisoformat(timestamp)
+                            except:
+                                timestamp = now
+                                
+                        delta = now - timestamp
+                        if delta.days > 0:
+                            time_ago = f"{delta.days} days ago"
+                        elif delta.seconds >= 3600:
+                            hours = delta.seconds // 3600
+                            time_ago = f"{hours} hour{'s' if hours > 1 else ''} ago"
+                        elif delta.seconds >= 60:
+                            minutes = delta.seconds // 60
+                            time_ago = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+                        else:
+                            time_ago = "Just now"
+                    else:
+                        time_ago = "Recently"
+                    
+                    # Color-code risk categories
+                    if risk_category == "Very High":
+                        risk_color = "#FF4B4B"  # Red
+                    elif risk_category == "High":
+                        risk_color = "#FF8C42"  # Orange
+                    elif risk_category == "Moderate":
+                        risk_color = "#FFCC3E"  # Yellow
+                    elif risk_category == "Low":
+                        risk_color = "#4CAF50"  # Green
+                    else:
+                        risk_color = "#666666"  # Gray
+                    
+                    # Display in columns
+                    col1, col2, col3 = st.columns([3, 2, 2])
+                    with col1:
+                        # Make job title clickable to search again - use a unique key with index
+                        search_key = f"search_{job_title.replace(' ', '_')}_{i}_{abs(hash(str(search))) % 10000}"
+                        if st.button(job_title, key=search_key):
+                            st.session_state.job_title = job_title
+                            st.rerun()
+                    with col2:
+                        st.markdown(f"<p style='color: {risk_color};'>{risk_category}</p>", unsafe_allow_html=True)
+                    with col3:
+                        st.write(time_ago)
+            else:
+                st.info("No recent searches yet. Be the first to analyze a job!")
 
-# Job Comparison Tab
+# Job Comparison Tab - Match original functionality from screenshots
 with tabs[1]:  # Job Comparison tab
     st.markdown("<h2 style='color: #0084FF;'>Compare Jobs</h2>", unsafe_allow_html=True)
-    st.write("Compare AI displacement risk between multiple jobs to help with career planning.")
     
-    # Two-column layout for job selection
-    col1, col2 = st.columns(2)
+    # Introduction text
+    st.markdown("Compare the AI displacement risk for multiple jobs side by side to explore transition opportunities. Add up to 5 jobs.")
     
-    with col1:
-        # First job selection with enhanced autocomplete
-        job1 = job_title_autocomplete(
-            label="First Job Title",
-            key="job1_search",
-            placeholder="Start typing to see suggestions...",
-            help="Enter the first job to compare"
-        )
+    # Cache the job data to improve performance
+    @st.cache_data(ttl=3600)  # Cache for 1 hour
+    def get_cached_job_data(job_title):
+        """Cache job data to improve performance"""
+        return job_api_integration.get_job_data(job_title)
     
-    with col2:
-        # Second job selection with enhanced autocomplete
-        job2 = job_title_autocomplete(
-            label="Second Job Title",
-            key="job2_search",
-            placeholder="Start typing to see suggestions...",
-            help="Enter the second job to compare"
-        )
+    # Direct job entry with dynamic addition - restore original functionality
+    new_job = job_title_autocomplete(
+        label="Enter a job title and press Enter to add to comparison", 
+        key="compare_job_input",
+        placeholder="Start typing to see suggestions...",
+        help="Type a job title and select from matching suggestions"
+    )
     
-    # Compare button
-    if st.button("Compare Jobs"):
-        if not job1 or not job2:
-            st.error("Please enter both job titles to compare.")
-        elif job1 == job2:
-            st.error("Please select different jobs to compare.")
-        else:
-            # Show loading spinner
-            with st.spinner(f"Comparing {job1} and {job2}..."):
-                # Get data for both jobs
-                try:
-                    # Get job data with caching
-                    job1_data = get_cached_job_data(job1)
-                    job2_data = get_cached_job_data(job2)
-                    
-                    if not job1_data or not job2_data:
-                        # Fallback to direct API calls if caching fails
-                        job1_data = job_api_integration.get_job_data(job1)
-                        job2_data = job_api_integration.get_job_data(job2)
-                    
-                    # Display comparison
-                    st.subheader(f"Comparing: {job1} vs {job2}")
-                    
-                    # Create three columns for comparison
-                    metric_col, job1_col, job2_col = st.columns([1, 1, 1])
-                    
-                    with metric_col:
-                        st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
-                        st.markdown("<h4>Metric</h4>", unsafe_allow_html=True)
-                        st.markdown("<p>Job Category</p>", unsafe_allow_html=True)
-                        st.markdown("<p>1-Year Risk</p>", unsafe_allow_html=True)
-                        st.markdown("<p>5-Year Risk</p>", unsafe_allow_html=True)
-                        st.markdown("<p>Risk Category</p>", unsafe_allow_html=True)
-                        st.markdown("<p>Current Employment</p>", unsafe_allow_html=True)
-                        st.markdown("<p>Projected Growth</p>", unsafe_allow_html=True)
-                        st.markdown("<p>Annual Job Openings</p>", unsafe_allow_html=True)
-                    
-                    with job1_col:
-                        st.markdown(f"<h4>{job1}</h4>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job1_data.get('job_category', 'Unknown')}</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job1_data.get('risk_scores', {}).get('year_1', 0):.1f}%</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job1_data.get('risk_scores', {}).get('year_5', 0):.1f}%</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job1_data.get('risk_category', 'Unknown')}</p>", unsafe_allow_html=True)
-                        
-                        bls_data1 = job1_data.get("bls_data", {})
-                        employment1 = bls_data1.get("employment", "Unknown")
-                        if isinstance(employment1, (int, float)):
-                            employment1 = f"{employment1:,.0f}"
-                        st.markdown(f"<p>{employment1}</p>", unsafe_allow_html=True)
-                        
-                        growth1 = bls_data1.get("employment_change_percent", "Unknown")
-                        if isinstance(growth1, (int, float)):
-                            growth1 = f"{growth1:+.1f}%"
-                        st.markdown(f"<p>{growth1}</p>", unsafe_allow_html=True)
-                        
-                        openings1 = bls_data1.get("annual_job_openings", "Unknown")
-                        if isinstance(openings1, (int, float)):
-                            openings1 = f"{openings1:,.0f}"
-                        st.markdown(f"<p>{openings1}</p>", unsafe_allow_html=True)
-                    
-                    with job2_col:
-                        st.markdown(f"<h4>{job2}</h4>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job2_data.get('job_category', 'Unknown')}</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job2_data.get('risk_scores', {}).get('year_1', 0):.1f}%</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job2_data.get('risk_scores', {}).get('year_5', 0):.1f}%</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{job2_data.get('risk_category', 'Unknown')}</p>", unsafe_allow_html=True)
-                        
-                        bls_data2 = job2_data.get("bls_data", {})
-                        employment2 = bls_data2.get("employment", "Unknown")
-                        if isinstance(employment2, (int, float)):
-                            employment2 = f"{employment2:,.0f}"
-                        st.markdown(f"<p>{employment2}</p>", unsafe_allow_html=True)
-                        
-                        growth2 = bls_data2.get("employment_change_percent", "Unknown")
-                        if isinstance(growth2, (int, float)):
-                            growth2 = f"{growth2:+.1f}%"
-                        st.markdown(f"<p>{growth2}</p>", unsafe_allow_html=True)
-                        
-                        openings2 = bls_data2.get("annual_job_openings", "Unknown")
-                        if isinstance(openings2, (int, float)):
-                            openings2 = f"{openings2:,.0f}"
-                        st.markdown(f"<p>{openings2}</p>", unsafe_allow_html=True)
-                    
-                    # Divider
-                    st.markdown("---")
-                    
-                    # Comparison Chart - Bar chart comparing 5-year risk
-                    st.subheader("5-Year Risk Comparison")
-                    
-                    # Prepare chart data
-                    chart_data = pd.DataFrame({
-                        'Job': [job1, job2],
-                        'Risk': [
-                            job1_data.get('risk_scores', {}).get('year_5', 0),
-                            job2_data.get('risk_scores', {}).get('year_5', 0)
-                        ]
-                    })
-                    
-                    # Create a bar chart
-                    fig = go.Figure()
-                    
-                    # Add bars with different colors based on risk level
-                    for job, risk in zip(chart_data['Job'], chart_data['Risk']):
-                        if risk < 25:
-                            color = "rgba(0, 255, 0, 0.7)"  # Green for low risk
-                        elif risk < 50:
-                            color = "rgba(255, 255, 0, 0.7)"  # Yellow for moderate risk
-                        elif risk < 75:
-                            color = "rgba(255, 165, 0, 0.7)"  # Orange for high risk
-                        else:
-                            color = "rgba(255, 0, 0, 0.7)"  # Red for very high risk
-                        
-                        fig.add_trace(go.Bar(
-                            x=[job],
-                            y=[risk],
-                            name=job,
-                            marker_color=color,
-                            text=[f"{risk:.1f}%"],
-                            textposition='auto'
-                        ))
-                    
-                    # Update layout
-                    fig.update_layout(
-                        title="5-Year AI Displacement Risk",
-                        yaxis=dict(
-                            title="Risk Percentage",
-                            ticksuffix="%",
-                            range=[0, 100]  # Fixed range for better comparison
-                        ),
-                        barmode='group',
-                        height=400
-                    )
-                    
-                    # Display the chart
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Comparative Analysis
-                    st.subheader("Comparative Analysis")
-                    
-                    # Determine which job has lower risk
-                    job1_risk = job1_data.get('risk_scores', {}).get('year_5', 0)
-                    job2_risk = job2_data.get('risk_scores', {}).get('year_5', 0)
-                    
-                    if job1_risk < job2_risk:
-                        lower_risk_job = job1
-                        higher_risk_job = job2
-                        risk_difference = job2_risk - job1_risk
-                    else:
-                        lower_risk_job = job2
-                        higher_risk_job = job1
-                        risk_difference = job1_risk - job2_risk
-                    
-                    # Create analysis text
-                    if risk_difference < 5:
-                        analysis_text = f"**{job1}** and **{job2}** have similar AI displacement risk levels (difference of {risk_difference:.1f}%). Both roles face comparable challenges from automation in the next 5 years."
-                    else:
-                        analysis_text = f"**{lower_risk_job}** has {risk_difference:.1f}% lower AI displacement risk than **{higher_risk_job}**. This suggests that {lower_risk_job} may offer more job security over the next 5 years."
-                    
-                    st.markdown(analysis_text)
-                    
-                    # Add career recommendation based on the comparison
-                    st.subheader("Career Recommendation")
-                    
-                    if risk_difference < 5:
-                        recommendation = "Since both roles have similar risk profiles, consider which job better aligns with your skills, interests, and long-term career goals. Focus on developing complementary skills that enhance your value in either role."
-                    elif job1_risk < job2_risk:
-                        recommendation = f"Based on AI displacement risk alone, {job1} offers more job security. However, also consider factors like job satisfaction, salary potential, and alignment with your skills and interests before making a career decision."
-                    else:
-                        recommendation = f"Based on AI displacement risk alone, {job2} offers more job security. However, also consider factors like job satisfaction, salary potential, and alignment with your skills and interests before making a career decision."
-                    
-                    st.markdown(recommendation)
-                    
-                    # Career transition button
-                    if st.button("Career Transition Plan"):
-                        with st.spinner("Loading Career Navigator..."):
-                            time.sleep(1)  # Simulate loading
-                            career_html = career_navigator.get_html()
-                            st.markdown(career_html, unsafe_allow_html=True)
-                
-                except Exception as e:
-                    st.error(f"Error comparing jobs: {str(e)}")
-
-# Sidebar with recent searches and statistics
-with st.sidebar:
-    st.markdown("<h3 style='color: #0084FF;'>Job Search Insights</h3>", unsafe_allow_html=True)
+    # Initialize session state for selected jobs if not already present
+    if 'selected_jobs' not in st.session_state:
+        st.session_state.selected_jobs = []
     
-    # Recent searches
-    st.markdown("<h4 style='color: #0084FF;'>Recent Searches</h4>", unsafe_allow_html=True)
-    recent_searches = get_recent_searches(limit=5)
-    for job in recent_searches:
-        job_title = job.get("job_title", "Unknown")
-        risk = job.get("year_5_risk", 0)
-        risk_text = f"{risk:.1f}%" if isinstance(risk, (int, float)) else "Unknown"
-        risk_class = "job-risk-low"
-        if risk >= 75:
-            risk_class = "job-risk-very-high"
-        elif risk >= 50:
-            risk_class = "job-risk-high"
-        elif risk >= 25:
-            risk_class = "job-risk-moderate"
+    # Add job when entered and Enter key is pressed
+    if new_job and new_job not in st.session_state.selected_jobs and len(st.session_state.selected_jobs) < 5:
+        # Automatically add job when Enter is pressed
+        with st.spinner(f"Adding {new_job} to comparison..."):
+            # Pre-load the job data in cache
+            get_cached_job_data(new_job)
+            st.session_state.selected_jobs.append(new_job)
+    
+    # Display current comparison jobs with remove buttons
+    if st.session_state.selected_jobs:
+        st.subheader("Current Comparison:")
         
-        st.markdown(f"""
-        <div class="{risk_class}">
-            <strong>{job_title}</strong><br>
-            5-Year Risk: {risk_text}
+        # Create columns for each job
+        job_cols = st.columns(len(st.session_state.selected_jobs))
+        
+        # Display each job with a remove button
+        for i, job in enumerate(st.session_state.selected_jobs.copy()):
+            with job_cols[i]:
+                st.markdown(f"**{job}**")
+                if st.button("❌", key=f"remove_{i}"):
+                    st.session_state.selected_jobs.remove(job)
+                    st.rerun()
+        
+        # Add clear all button
+        if st.button("Clear All Jobs", key="clear_jobs"):
+            st.session_state.selected_jobs = []
+            st.rerun()
+    
+    # Display comparison when jobs are selected
+    if st.session_state.selected_jobs and len(st.session_state.selected_jobs) >= 1:
+        st.subheader(f"Analyzing {len(st.session_state.selected_jobs)} Jobs")
+        
+        # Process jobs with better progress feedback
+        progress_text = st.empty()
+        job_data_collection = {}
+        
+        # Show progress as jobs are processed
+        for i, job in enumerate(st.session_state.selected_jobs):
+            progress_text.write(f"Processing {i+1}/{len(st.session_state.selected_jobs)}: {job}")
+            job_data_collection[job] = get_cached_job_data(job)
+        
+        progress_text.write("All jobs processed. Generating comparison...")
+        
+        # Now we have all job data, proceed with visualization
+        # Get data for selected jobs using the comparison function
+        job_data = simple_comparison.get_job_comparison_data(st.session_state.selected_jobs)
+        
+        # Create visualization tabs for different comparison views
+        comparison_tabs = st.tabs(["Comparison Chart", "Comparative Analysis", "Risk Heatmap", "Risk Factors"])
+        
+        # Tab 1: Basic comparison chart
+        with comparison_tabs[0]:
+            st.markdown("<h3 style='color: #0084FF;'>5-Year AI Displacement Risk Comparison</h3>", unsafe_allow_html=True)
+            chart = simple_comparison.create_comparison_chart(job_data)
+            st.plotly_chart(chart, use_container_width=True)
+            
+            # Display short explanation under the chart
+            st.markdown("""
+            **Chart Explanation**: This chart shows the projected AI displacement risk after 5 years for each selected job. 
+            Higher percentages indicate greater likelihood that AI will significantly impact or automate aspects of this role.
+            """)
+        
+        # Tab 2: Side-by-side comparative analysis
+        with comparison_tabs[1]:
+            st.markdown("<h3 style='color: #0084FF;'>Detailed Comparison</h3>", unsafe_allow_html=True)
+            
+            # Create tabular comparison
+            comparison_df = simple_comparison.create_comparison_table(job_data)
+            
+            # Display the table with improved formatting
+            st.dataframe(comparison_df, use_container_width=True)
+            
+            # Side-by-side comparison with actual job data
+            st.subheader("Job Comparison Analysis")
+            
+            # Extract BLS and job data for comparison
+            jobs_bls_data = {}
+            jobs_skill_data = {}
+            
+            # Extract important data points for each job
+            for job_title, job_info in job_data.items():
+                # Get BLS data if available
+                bls_data = job_info.get("bls_data", {})
+                
+                # Get additional data from job API integration and our hardcoded BLS data
+                try:
+                    # Import our BLS employment data module with hardcoded values
+                    import bls_employment_data
+                    
+                    # Try to get data from the API first
+                    api_data = job_api_integration.get_job_data(job_title)
+                    api_bls_data = api_data.get("bls_data", {})
+                    
+                    # If API data not available, try hardcoded BLS data
+                    if not api_bls_data.get("employment"):
+                        hardcoded_data = bls_employment_data.get_employment_data(job_title)
+                        if hardcoded_data:
+                            api_bls_data = hardcoded_data
+                    
+                    # Use API data if available, otherwise use job_info data
+                    employment = api_bls_data.get("employment") or bls_data.get("employment", "N/A")
+                    openings = api_bls_data.get("annual_job_openings") or bls_data.get("annual_job_openings", "N/A")
+                    growth = api_bls_data.get("employment_change_percent") or bls_data.get("employment_change_percent", "N/A")
+                    
+                    # Format the values nicely
+                    if isinstance(employment, (int, float)) and employment != "N/A":
+                        employment = f"{int(employment):,}"
+                    
+                    if isinstance(openings, (int, float)) and openings != "N/A":
+                        openings = f"{int(openings):,}"
+                        
+                    if isinstance(growth, (int, float)) and growth != "N/A":
+                        growth = f"{float(growth):+.1f}"
+                except Exception as e:
+                    print(f"Error getting API data for {job_title}: {str(e)}")
+                    employment = bls_data.get("employment", "N/A")
+                    openings = bls_data.get("annual_job_openings", "N/A")
+                    growth = bls_data.get("employment_change_percent", "N/A")
+                    
+                jobs_bls_data[job_title] = {
+                    "Employment": employment,
+                    "Annual Job Openings": openings,
+                    "Growth": growth,
+                    "Category": job_info.get("job_category", "General")
+                }
+                
+                # Get skill data from our job_comparison module
+                import job_comparison
+                
+                # Define default skills first so it's always available
+                default_skills = {
+                    'technical_skills': ['Data analysis', 'Industry knowledge', 'Computer proficiency'],
+                    'soft_skills': ['Communication', 'Problem-solving', 'Adaptability'],
+                    'emerging_skills': ['AI collaboration', 'Digital literacy', 'Remote work skills']
+                }
+                
+                # First try an exact case match
+                if job_title in job_comparison.JOB_SKILLS:
+                    skills = job_comparison.JOB_SKILLS[job_title]
+                else:
+                    # Try case-insensitive match
+                    found = False
+                    for skill_job, skill_data in job_comparison.JOB_SKILLS.items():
+                        if job_title.lower() == skill_job.lower():
+                            skills = skill_data
+                            found = True
+                            break
+                    
+                    if not found:
+                        # Use default skills if no match found
+                        skills = default_skills
+                
+                jobs_skill_data[job_title] = {
+                    "Technical Skills": skills.get('technical_skills', ["N/A"]),
+                    "Soft Skills": skills.get('soft_skills', ["N/A"]),
+                    "Emerging Skills": skills.get('emerging_skills', ["N/A"])
+                }
+            
+            # Create comparison sections
+            st.markdown("### Employment & Market Comparison")
+            
+            # Add explanatory note about BLS data
+            st.info("""
+            **Note on Employment Data**: The Bureau of Labor Statistics organizes employment data by standardized 
+            occupational codes, not by specific job titles. Some job titles may not directly map to BLS classifications, 
+            particularly newer or specialized roles. We do our best to match job titles to the appropriate BLS categories.
+            """)
+            
+            # Create employment data comparison
+            emp_data = []
+            for job, data in jobs_bls_data.items():
+                emp_data.append({
+                    "Job Title": job,
+                    "Category": data["Category"],
+                    "Current Employment": data["Employment"] if data["Employment"] != "N/A" else "Data unavailable",
+                    "Projected Growth": f"{data['Growth']}%" if data["Growth"] != "N/A" else "Data unavailable",
+                    "Annual Openings": data["Annual Job Openings"] if data["Annual Job Openings"] != "N/A" else "Data unavailable"
+                })
+            
+            # Display employment comparison
+            if emp_data:
+                emp_df = pd.DataFrame(emp_data)
+                st.dataframe(emp_df, use_container_width=True)
+            
+            # Display skill comparison
+            st.markdown("### Skill Comparison")
+            
+            # Create side-by-side skill comparison
+            skill_cols = st.columns(len(jobs_skill_data))
+            
+            for i, (job, skills) in enumerate(jobs_skill_data.items()):
+                with skill_cols[i]:
+                    st.markdown(f"#### {job}")
+                    
+                    st.markdown("**Technical Skills:**")
+                    for skill in skills["Technical Skills"]:
+                        st.markdown(f"- {skill}")
+                    
+                    st.markdown("**Soft Skills:**")
+                    for skill in skills["Soft Skills"]:
+                        st.markdown(f"- {skill}")
+                    
+                    st.markdown("**Emerging Skills:**")
+                    for skill in skills["Emerging Skills"]:
+                        st.markdown(f"- {skill}")
+            
+            # Transition Guidance section
+            st.markdown("### Career Transition Recommendations")
+            
+            # Get lowest risk job from comparison for guidance
+            risk_values = [(job, data.get("risk_scores", {}).get("year_5", 0)) 
+                          for job, data in job_data.items()]
+            
+            if len(risk_values) >= 2:
+                lowest_job = min(risk_values, key=lambda x: x[1])
+                highest_job = max(risk_values, key=lambda x: x[1])
+                
+                # Check if significant difference in risk
+                if abs(highest_job[1] - lowest_job[1]) > 0.2:
+                    st.markdown(f"""
+                    Based on comparing these positions, transitioning toward roles like **{lowest_job[0]}** may provide more long-term career stability as AI adoption increases. Consider the following steps:
+                    
+                    1. **Skill Development Focus**: Identify overlapping skill requirements between your current role and positions like {lowest_job[0]}
+                    2. **Education/Training**: Research specific certifications or courses that would strengthen your qualifications for this career transition
+                    3. **Experience Building**: Look for projects or responsibilities in your current role that align with {lowest_job[0]} to build relevant experience
+                    """)
+                else:
+                    st.markdown("""
+                    The selected positions show relatively similar AI impact projections. Consider focusing on enhancing your skills within your current career path:
+                    
+                    1. **Upskilling**: Develop advanced expertise in your field to handle complex cases AI cannot manage
+                    2. **Cross-functional Knowledge**: Build broader understanding across related domains to increase your versatility
+                    3. **AI Collaboration Skills**: Develop proficiency working alongside AI tools to enhance your productivity
+                    """)
+            else:
+                st.markdown("Add more jobs to the comparison to receive transition recommendations.")
+        
+        # Tab 3: Risk heatmap
+        with comparison_tabs[2]:
+            st.markdown("<h3 style='color: #0084FF;'>Risk Progression Heatmap</h3>", unsafe_allow_html=True)
+            
+            heatmap = simple_comparison.create_risk_heatmap(job_data)
+            st.plotly_chart(heatmap, use_container_width=True)
+            
+            st.markdown("""
+            **Heatmap Explanation**: This visualization shows how displacement risk is projected to increase over time for each position.
+            Darker colors indicate higher risk levels, helping you understand both immediate and long-term vulnerability.
+            """)
+        
+        # Tab 4: Risk factors comparison
+        with comparison_tabs[3]:
+            st.markdown("<h3 style='color: #0084FF;'>Risk Factor Analysis</h3>", unsafe_allow_html=True)
+            
+            # Create radar chart for risk factor comparison
+            radar = simple_comparison.create_radar_chart(job_data)
+            st.plotly_chart(radar, use_container_width=True)
+            
+            st.markdown("""
+            **Factor Analysis Explanation**: This radar chart compares positions across key risk dimensions. 
+            Jobs with larger areas on the chart face higher overall risk from AI disruption across multiple factors.
+            """)
+        
+        # Career Navigator Integration
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color: #0084FF;'>Next Steps: Personalized Career Navigator</h2>", unsafe_allow_html=True)
+        st.markdown("Get personalized career guidance based on your skills and interests.", unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div style='background-color: #0084FF; color: white; padding: 20px; border-radius: 10px; margin-top: 20px;'>
+            <h3 style='color: white;'>Career Navigator</h3>
+            <p style='font-size: 16px;'>Our AI-powered Career Navigator provides personalized guidance to help you navigate the changing job market:</p>
+            <ul style='font-size: 16px;'>
+                <li>Identify transferable skills that increase your value</li>
+                <li>Discover resilient career paths aligned with your experience</li>
+                <li>Get specific training recommendations with costs and ROI</li>
+                <li>Receive a customized transition plan with timeline and milestones</li>
+            </ul>
+            <a href='https://form.jotform.com/251137815706154' target='_blank'>
+                <button style='background-color: white; color: #0084FF; border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; margin-top: 10px;'>
+                    Get Your Personalized Career Plan
+                </button>
+            </a>
         </div>
         """, unsafe_allow_html=True)
-    
-    # Most popular searches
-    st.markdown("<h4 style='color: #0084FF;'>Popular Searches</h4>", unsafe_allow_html=True)
-    popular_searches = get_popular_searches(limit=5)
-    for job in popular_searches:
-        st.markdown(f"• {job.get('job_title', 'Unknown')}")
-    
-    # High and Low Risk Jobs
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("<h4 style='color: #0084FF; font-size: 14px;'>Highest Risk</h4>", unsafe_allow_html=True)
-        highest_risk = get_highest_risk_jobs(limit=5)
-        for job in highest_risk:
-            st.markdown(f"• {job.get('job_title', 'Unknown')}")
-    
-    with col2:
-        st.markdown("<h4 style='color: #0084FF; font-size: 14px;'>Lowest Risk</h4>", unsafe_allow_html=True)
-        lowest_risk = get_lowest_risk_jobs(limit=5)
-        for job in lowest_risk:
-            st.markdown(f"• {job.get('job_title', 'Unknown')}")
-    
-    # Database status
-    st.markdown("---")
-    if database_available:
-        st.success("✅ Using connected database")
-    else:
-        st.info("ℹ️ Using local storage (database not connected)")
-    
-    # Version info
-    st.markdown("<div style='font-size: 12px; color: #999;'>iThriveAI Job Risk Analyzer v2.5 - Enhanced Autocomplete</div>", unsafe_allow_html=True)
